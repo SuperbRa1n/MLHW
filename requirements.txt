@@ -1,5 +1,8 @@
 ftfy
+packaging
 regex
 tqdm
 torch
 torchvision
+requests
+scipy

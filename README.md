@@ -1,8 +1,46 @@
-# CLIP
+# CLIP-Adapter: Few-Shot Learning with CLIP
+
+本项目基于 [OpenAI CLIP](https://github.com/openai/CLIP) 仓库修改，主要实现了 **CLIP-Adapter** 方法，用于在 ImageNet 数据集上进行少样本学习（Few-Shot Learning）。
+
+## 项目简介
+
+本项目在原始 CLIP 模型的基础上，添加了轻量级的适配器（Adapter）模块，通过冻结 CLIP 的预训练参数，只训练少量可学习的适配器参数，实现在少量样本上的高效微调。相比全参数微调，CLIP-Adapter 具有以下优势：
+
+- **参数效率高**：只训练少量适配器参数，大幅降低训练成本
+- **训练速度快**：冻结 CLIP 主干网络，训练速度更快
+- **性能提升明显**：在 few-shot 设置下相比 zero-shot 有显著提升
+
+## 快速开始
+
+### 1. 环境安装
+
+首先安装必要的依赖：
+
+```bash
+pip install -r requirements.txt
+```
+
+### 2. 下载数据集
+
+运行下载脚本准备数据（详见下方"数据集下载"章节）：
+
+```bash
+python download_dataset.py
+```
+
+### 3. 训练模型
+
+使用 16-shot 设置训练 CLIP-Adapter：
+
+```bash
+python Adapter_16shot.py --data_root ./data/ImageNet-Custom --num_shots 16
+```
+
+## 原始 CLIP 介绍
 
 [[Blog]](https://openai.com/blog/clip/) [[Paper]](https://arxiv.org/abs/2103.00020) [[Model Card]](model-card.md) [[Colab]](https://colab.research.google.com/github/openai/clip/blob/master/notebooks/Interacting_with_CLIP.ipynb)
 
-CLIP (Contrastive Language-Image Pre-Training) is a neural network trained on a variety of (image, text) pairs. It can be instructed in natural language to predict the most relevant text snippet, given an image, without directly optimizing for the task, similarly to the zero-shot capabilities of GPT-2 and 3. We found CLIP matches the performance of the original ResNet50 on ImageNet “zero-shot” without using any of the original 1.28M labeled examples, overcoming several major challenges in computer vision.
+CLIP (Contrastive Language-Image Pre-Training) is a neural network trained on a variety of (image, text) pairs. It can be instructed in natural language to predict the most relevant text snippet, given an image, without directly optimizing for the task, similarly to the zero-shot capabilities of GPT-2 and 3. We found CLIP matches the performance of the original ResNet50 on ImageNet "zero-shot" without using any of the original 1.28M labeled examples, overcoming several major challenges in computer vision.
 
 
 
@@ -10,184 +48,105 @@ CLIP (Contrastive Language-Image Pre-Training) is a neural network trained on a 
 
 ![CLIP](CLIP.png)
 
+## 数据集下载
 
+本项目使用 ImageNet 数据集进行训练和评估。我们提供了一个自动下载脚本 `download_dataset.py` 来下载和准备数据。
 
-## Usage
+### 下载步骤
 
-First, [install PyTorch 1.7.1](https://pytorch.org/get-started/locally/) (or later) and torchvision, as well as small additional dependencies, and then install this repo as a Python package. On a CUDA GPU machine, the following will do the trick:
+1. **配置 Hugging Face Token**
+
+   由于 ImageNet 是受限数据集，需要先获取 Hugging Face Token：
+   - 访问 https://huggingface.co/settings/tokens 申请 Token
+   - 在 ImageNet 官网同意使用协议
+   - 编辑 `download_dataset.py`，将 `HF_TOKEN` 变量设置为你的 Token
+
+2. **运行下载脚本**
 
 ```bash
-$ conda install --yes -c pytorch pytorch=1.7.1 torchvision cudatoolkit=11.0
-$ pip install ftfy regex tqdm
-$ pip install git+https://github.com/openai/CLIP.git
+python download_dataset.py
 ```
 
-Replace `cudatoolkit=11.0` above with the appropriate CUDA version on your machine or `cpuonly` when installing on a machine without a GPU.
+脚本会自动完成以下操作：
+- 下载 ImageNet 类别映射文件（`imagenet_class_index.json`）
+- 从 Hugging Face 下载 ImageNet 数据集（默认每类 32 张图片）
+- 自动划分训练集和验证集（默认验证集占比 50%）
+- 将数据保存到 `./data/ImageNet-Custom/` 目录
 
-```python
-import torch
-import clip
-from PIL import Image
-
-device = "cuda" if torch.cuda.is_available() else "cpu"
-model, preprocess = clip.load("ViT-B/32", device=device)
-
-image = preprocess(Image.open("CLIP.png")).unsqueeze(0).to(device)
-text = clip.tokenize(["a diagram", "a dog", "a cat"]).to(device)
-
-with torch.no_grad():
-    image_features = model.encode_image(image)
-    text_features = model.encode_text(text)
-    
-    logits_per_image, logits_per_text = model(image, text)
-    probs = logits_per_image.softmax(dim=-1).cpu().numpy()
-
-print("Label probs:", probs)  # prints: [[0.9927937  0.00421068 0.00299572]]
+下载完成后，数据目录结构如下：
+```
+data/ImageNet-Custom/
+├── train/          # 训练集
+│   ├── n01440764/  # 类别文件夹
+│   ├── n01443537/
+│   └── ...
+├── val/            # 验证集
+│   ├── n01440764/
+│   ├── n01443537/
+│   └── ...
+└── imagenet_class_index.json  # 类别映射文件
 ```
 
+### 配置参数
 
-## API
+在 `download_dataset.py` 中可以调整以下参数：
+- `TOTAL_IMAGES_PER_CLASS`: 每个类别下载的图片总数（默认 32）
+- `VAL_RATIO`: 验证集占比（默认 0.5，即 50%）
+- `ROOT_DIR`: 数据保存路径（默认 `./data/ImageNet-Custom`）
 
-The CLIP module `clip` provides the following methods:
+## 运行 CLIP-Adapter
 
-#### `clip.available_models()`
+本项目提供了两个训练脚本，分别适用于不同的场景：
 
-Returns the names of the available CLIP models.
+### 1. Adapter_16shot.py - 16-shot 训练（推荐）
 
-#### `clip.load(name, device=..., jit=False)`
+该脚本使用自定义的 ImageNet 数据集（通过 `download_dataset.py` 下载），适合快速实验和测试。
 
-Returns the model and the TorchVision transform needed by the model, specified by the model name returned by `clip.available_models()`. It will download the model as necessary. The `name` argument can also be a path to a local checkpoint.
+**运行命令：**
 
-The device to run the model can be optionally specified, and the default is to use the first CUDA device if there is any, otherwise the CPU. When `jit` is `False`, a non-JIT version of the model will be loaded.
-
-#### `clip.tokenize(text: Union[str, List[str]], context_length=77)`
-
-Returns a LongTensor containing tokenized sequences of given text input(s). This can be used as the input to the model
-
----
-
-The model returned by `clip.load()` supports the following methods:
-
-#### `model.encode_image(image: Tensor)`
-
-Given a batch of images, returns the image features encoded by the vision portion of the CLIP model.
-
-#### `model.encode_text(text: Tensor)`
-
-Given a batch of text tokens, returns the text features encoded by the language portion of the CLIP model.
-
-#### `model(image: Tensor, text: Tensor)`
-
-Given a batch of images and a batch of text tokens, returns two Tensors, containing the logit scores corresponding to each image and text input. The values are cosine similarities between the corresponding image and text features, times 100.
-
-
-
-## More Examples
-
-### Zero-Shot Prediction
-
-The code below performs zero-shot prediction using CLIP, as shown in Appendix B in the paper. This example takes an image from the [CIFAR-100 dataset](https://www.cs.toronto.edu/~kriz/cifar.html), and predicts the most likely labels among the 100 textual labels from the dataset.
-
-```python
-import os
-import clip
-import torch
-from torchvision.datasets import CIFAR100
-
-# Load the model
-device = "cuda" if torch.cuda.is_available() else "cpu"
-model, preprocess = clip.load('ViT-B/32', device)
-
-# Download the dataset
-cifar100 = CIFAR100(root=os.path.expanduser("~/.cache"), download=True, train=False)
-
-# Prepare the inputs
-image, class_id = cifar100[3637]
-image_input = preprocess(image).unsqueeze(0).to(device)
-text_inputs = torch.cat([clip.tokenize(f"a photo of a {c}") for c in cifar100.classes]).to(device)
-
-# Calculate features
-with torch.no_grad():
-    image_features = model.encode_image(image_input)
-    text_features = model.encode_text(text_inputs)
-
-# Pick the top 5 most similar labels for the image
-image_features /= image_features.norm(dim=-1, keepdim=True)
-text_features /= text_features.norm(dim=-1, keepdim=True)
-similarity = (100.0 * image_features @ text_features.T).softmax(dim=-1)
-values, indices = similarity[0].topk(5)
-
-# Print the result
-print("\nTop predictions:\n")
-for value, index in zip(values, indices):
-    print(f"{cifar100.classes[index]:>16s}: {100 * value.item():.2f}%")
+```bash
+python Adapter_16shot.py \
+    --data_root ./data/ImageNet-Custom \
+    --num_shots 16 \
+    --batch_size 32 \
+    --epochs 20 \
+    --lr 1e-3 \
+    --adapter_dim 64 \
+    --alpha 0.2 \
+    --clip_backbone ViT-B/32
 ```
 
-The output will look like the following (the exact numbers may be slightly different depending on the compute device):
+**主要参数说明：**
+- `--data_root`: ImageNet 数据根目录（默认 `./data/ImageNet-Custom`）
+- `--num_shots`: 每个类别的训练样本数（默认 16）
+- `--batch_size`: 批次大小（默认 32）
+- `--epochs`: 训练轮数（默认 20）
+- `--lr`: 学习率（默认 1e-3）
+- `--adapter_dim`: 适配器中间层维度（默认 64）
+- `--alpha`: 适配器残差连接权重（默认 0.2）
+- `--clip_backbone`: CLIP 模型架构（默认 `ViT-B/32`，可选 `RN50`, `ViT-B/16` 等）
 
-```
-Top predictions:
+**输出文件：**
+- `best_adapter_16shot.pth`: 最佳模型 checkpoint
+- `training_curves_16shot.png`: 训练曲线图
+- `prediction_analysis_16shot.png`: 预测结果分析图
 
-           snake: 65.31%
-          turtle: 12.29%
-    sweet_pepper: 3.83%
-          lizard: 1.88%
-       crocodile: 1.75%
-```
+### 2. Adapter_all.py - 完整数据集测试
 
-Note that this example uses the `encode_image()` and `encode_text()` methods that return the encoded features of given inputs.
+该脚本使用完整的 ImageNet 数据集（需要预先下载完整 ImageNet）进行测试（但是训练仍使用16shot），适合完整实验。
 
+**运行命令：**
 
-### Linear-probe evaluation
-
-The example below uses [scikit-learn](https://scikit-learn.org/) to perform logistic regression on image features.
-
-```python
-import os
-import clip
-import torch
-
-import numpy as np
-from sklearn.linear_model import LogisticRegression
-from torch.utils.data import DataLoader
-from torchvision.datasets import CIFAR100
-from tqdm import tqdm
-
-# Load the model
-device = "cuda" if torch.cuda.is_available() else "cpu"
-model, preprocess = clip.load('ViT-B/32', device)
-
-# Load the dataset
-root = os.path.expanduser("~/.cache")
-train = CIFAR100(root, download=True, train=True, transform=preprocess)
-test = CIFAR100(root, download=True, train=False, transform=preprocess)
-
-
-def get_features(dataset):
-    all_features = []
-    all_labels = []
-    
-    with torch.no_grad():
-        for images, labels in tqdm(DataLoader(dataset, batch_size=100)):
-            features = model.encode_image(images.to(device))
-
-            all_features.append(features)
-            all_labels.append(labels)
-
-    return torch.cat(all_features).cpu().numpy(), torch.cat(all_labels).cpu().numpy()
-
-# Calculate the image features
-train_features, train_labels = get_features(train)
-test_features, test_labels = get_features(test)
-
-# Perform logistic regression
-classifier = LogisticRegression(random_state=0, C=0.316, max_iter=1000, verbose=1)
-classifier.fit(train_features, train_labels)
-
-# Evaluate using the logistic regression classifier
-predictions = classifier.predict(test_features)
-accuracy = np.mean((test_labels == predictions).astype(np.float)) * 100.
-print(f"Accuracy = {accuracy:.3f}")
+```bash
+python Adapter_all.py \
+    --data_root ./data/ImageNet-Mini \
+    --num_shots 16 \
+    --batch_size 32 \
+    --epochs 20 \
+    --lr 1e-3 \
+    --adapter_dim 64 \
+    --alpha 0.2 \
+    --clip_backbone RN50
 ```
 
-Note that the `C` value should be determined via a hyperparameter sweep using a validation split.
+**注意：** 使用该脚本需要先下载完整的 ImageNet 数据集，并确保数据目录结构正确。

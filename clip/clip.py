@@ -2,8 +2,8 @@ import hashlib
 import os
 import urllib
 import warnings
-from typing import Any, Union, List
-from pkg_resources import packaging
+from packaging import version
+from typing import Union, List
 
 import torch
 from PIL import Image
@@ -20,7 +20,7 @@ except ImportError:
     BICUBIC = Image.BICUBIC
 
 
-if packaging.version.parse(torch.__version__) < packaging.version.parse("1.7.1"):
+if version.parse(torch.__version__) < version.parse("1.7.1"):
     warnings.warn("PyTorch version 1.7.1 or higher is recommended")
 
 
@@ -145,6 +145,14 @@ def load(name: str, device: Union[str, torch.device] = "cuda" if torch.cuda.is_a
     device_holder = torch.jit.trace(lambda: torch.ones([]).to(torch.device(device)), example_inputs=[])
     device_node = [n for n in device_holder.graph.findAllNodes("prim::Constant") if "Device" in repr(n)][-1]
 
+    def _node_get(node: torch._C.Node, key: str):
+        """Gets attributes of a node which is polymorphic over return type.
+        
+        From https://github.com/pytorch/pytorch/pull/82628
+        """
+        sel = node.kindOf(key)
+        return getattr(node, sel)(key)
+
     def patch_device(module):
         try:
             graphs = [module.graph] if hasattr(module, "graph") else []
@@ -156,7 +164,7 @@ def load(name: str, device: Union[str, torch.device] = "cuda" if torch.cuda.is_a
 
         for graph in graphs:
             for node in graph.findAllNodes("prim::Constant"):
-                if "value" in node.attributeNames() and str(node["value"]).startswith("cuda"):
+                if "value" in node.attributeNames() and str(_node_get(node, "value")).startswith("cuda"):
                     node.copyAttributes(device_node)
 
     model.apply(patch_device)
@@ -182,7 +190,7 @@ def load(name: str, device: Union[str, torch.device] = "cuda" if torch.cuda.is_a
                 for node in graph.findAllNodes("aten::to"):
                     inputs = list(node.inputs())
                     for i in [1, 2]:  # dtype can be the second or third argument to aten::to()
-                        if inputs[i].node()["value"] == 5:
+                        if _node_get(inputs[i].node(), "value") == 5:
                             inputs[i].node().copyAttributes(float_node)
 
         model.apply(patch_float)
@@ -220,7 +228,7 @@ def tokenize(texts: Union[str, List[str]], context_length: int = 77, truncate: b
     sot_token = _tokenizer.encoder["<|startoftext|>"]
     eot_token = _tokenizer.encoder["<|endoftext|>"]
     all_tokens = [[sot_token] + _tokenizer.encode(text) + [eot_token] for text in texts]
-    if packaging.version.parse(torch.__version__) < packaging.version.parse("1.8.0"):
+    if version.parse(torch.__version__) < version.parse("1.8.0"):
         result = torch.zeros(len(all_tokens), context_length, dtype=torch.long)
     else:
         result = torch.zeros(len(all_tokens), context_length, dtype=torch.int)
